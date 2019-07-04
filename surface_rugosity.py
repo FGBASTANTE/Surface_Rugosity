@@ -53,8 +53,10 @@ except:
     WRITER = pd.ExcelWriter(RES_NAM)
 
 def detrend_fit(x, y, z, deg):
-    """ Función para eliminar la tendencia de una superficie z=z(x, y)
-     utilizando un polinomio de grado deg en x e y """
+    """ 
+    Función para eliminar la tendencia de una superficie z=z(x, y)
+    utilizando un polinomio de grado deg en x e y 
+    """
     from numpy.polynomial import polynomial
     rg_x, rg_y = 0.5*(np.max(x) - np.min(x)), 0.5*(np.max(y) - np.min(y))
     x = np.asarray(xo)/rg_x
@@ -91,7 +93,6 @@ for nick in FICHEROS:
     # Se intercambia la z sin tendencia con la zo original
     if USE_DETREND:
         zo_detrend = detrend_fit(xo, yo, zo, deg=DEG)
-#        zoo = zo.copy()
         zo = zo - zo_detrend
         points = np.c_[points, zo, zo_detrend]
         points = points[:, [0, 1, 3, 2, 4]]
@@ -504,43 +505,3 @@ for nick in FICHEROS:
 
 WRITER.save()
 WRITER.close()
-
-
-
-
-
-
-
-
-# Utilidades
-
-    #    import mplstereonet
-    #    fig, ax = mplstereonet.subplots()
-    #    strikes = aspectrad
-    #    dips = smagrad
-    #    estereo = mplstereonet.kmeans(strikes, dips)
-    #    cax = ax.density_contourf(strikes, dips, measurement='poles')
-    #    ax.pole(strikes, dips)
-    #    ax.grid(True)
-    #    fig.colorbar(cax)
-
-
-
-
-#from mpl_toolkits import mplot3d as mpl
-#fig = plt.figure()
-#ax = plt.axes(projection='3d')
-#ax.contour3D(grid_x, grid_y, gradz_y, 50, cmap='binary')
-#ax.set_xlabel('x')
-#ax.set_ylabel('y')
-#ax.set_zlabel('z')
-#
-##ax = plt.axes(projection='3d')
-#ax.plot_surface(grid_x, grid_y, grid_z1, rstride=1, cstride=1,
-#                cmap='Greys', edgecolor='none')
-#ax.set_xlabel('x')
-#ax.set_ylabel('y')
-#ax.set_zlabel('z');
-#ax.set_title('surface');
-#
-#np.savetxt('puntos3D.txt', fichero, delimiter=';') #se guarda
