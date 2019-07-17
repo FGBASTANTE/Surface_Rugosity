@@ -654,19 +654,3 @@ if USE_MAYAVI:
 
     # Por ejemplo:
     mlab.surf(grid_x, grid_y, grid_z1)
-
-
-#    ax = plt.axes(projection='3d')
-#    mpl.Axes3D.plot_trisurf(p_points[:, 0], p_points[:, 1], p_points[:, 2])
-#    ax.contour3D(p_points[:, 0], p_points[:, 1], p_points[:, 2], 5, cmap='binary')
-##    ax.contour3D(grid_x, grid_y, gradz_y, 50, cmap='binary')
-#    ax.set_xlabel('x')
-#    ax.set_ylabel('y')
-#    ax.set_zlabel('z')
-##
-##ax = plt.axes(projection='3d')
-#ax.plot_surface(grid_x, grid_y, grid_z1, rstride=1, cstride=1,
-#                cmap='Greys', edgecolor='none')
-
-#
-#np.savetxt('puntos3D.txt', fichero, delimiter=';') #se guarda
