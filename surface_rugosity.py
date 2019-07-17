@@ -27,19 +27,63 @@ import pandas as pd
 from openpyxl import load_workbook
 
 # Evitamos que se generen plots por defecto: consumen recursos
-plt.ioff()
+#plt.ioff()
 
 # Se introduce la ruta al directorio de los raw data
-DATA_FOLDER = Path("E:/Tilt_test/I.Perez_Granito")
+DATA_FOLDER = Path("E:/Tilt_test/I.Perez_Caliza")
 
-# Se lee el nombre de los ficheros de puntos (terminan en .xyz)
-FICHEROS = [files for files in os.listdir(DATA_FOLDER) if files.endswith(".xyz")]
+# Y el apellido que indica su formato (terminan en .xyz en este caso)
+APELLIDO = '.xyz'
 
-# Decomentar para hacer el análisis de solo algún fichero
-FICHEROS = [FICHEROS[1]]
+# Se lee el nombre de los ficheros de puntos
+FICHEROS = [files for files in os.listdir(DATA_FOLDER) \
+           if files.endswith(APELLIDO)]
+
+# Parámetro para definir si se crean las figuras
+Make_Plots = False
+
+# Algunos parámetros por defecto para los plots (figsize en pulgadas)
+plt.rcParams['figure.figsize'] = [6.0, 4.0]
+plt.rcParams['figure.dpi'] = 100
+
+# Parámetro para ver una pequeña zona en 3D
+PLOT_3D = False
+
+# coordenadas de la zona de visualización
+Min_Cx, Max_Cx = 1500, 3000
+Min_Cy, Max_Cy = 2500, 5000
+
+# Para interactuar con Mayavi:
+USE_MAYAVI = False
+
+# Proporción lineal (ventana) de la zona central a analizar (con punto decimal)
+prop = 1.0
+
+# Espaciado del grid (x/y) de trabajo en unidades del sistema de coordenadas
+step = 16
+
+# True para eliminar la tendencia de z con un polinomio de grado DEG
+USE_DETREND = True
+DEG = 7
+
+# True para filtrar las Z's a partir n_stdz (max y min) desviaciones estándar
+FILTER_Z = False
+n_stdzomax, n_stdzomin = 4, 100
 
 # Nombre del fichero excel donde se guardarán los resultados
-RES_NAM = "resultados_UTb.xlsx"
+RES_NAM = "pruebas"
+
+# Lo modificamos en caso de quitar tendencia y/o utilizar filtro
+if USE_DETREND: RES_NAM = RES_NAM + '_UT'
+if FILTER_Z: RES_NAM = RES_NAM + '_F'
+RES_NAM = RES_NAM + '.xlsx'
+
+# Para guardar el fichero excel en disco duro
+# Si no se guarda el fichero queda en memoria
+USE_WRITER = True
+
+# Decomentar para hacer el análisis de solo algún fichero
+FICHEROS = [FICHEROS[5]]
 
 # Se abre el fichero para guardar resultados (o se crea si no existe)
 # Si existe NO SOBREESCRIBE las hojas
@@ -53,21 +97,22 @@ except:
     WRITER = pd.ExcelWriter(RES_NAM)
 
 def detrend_fit(x, y, z, deg):
-    """ 
-    Función para eliminar la tendencia de una superficie z=z(x, y)
-    utilizando un polinomio de grado deg en x e y 
-    """
+    """ Función para eliminar la tendencia de una superficie z=z(x, y)
+     utilizando un polinomio de grado deg en x e y """
     from numpy.polynomial import polynomial
+
+    # Normalizo el grid para que no den valores descomunales
     rg_x, rg_y = 0.5*(np.max(x) - np.min(x)), 0.5*(np.max(y) - np.min(y))
-    x = np.asarray(xo)/rg_x
-    y = np.asarray(yo)/rg_y
-    z = np.asarray(zo)
+    x = np.asarray(x)/rg_x
+    y = np.asarray(y)/rg_y
+    z = np.asarray(z)
+
     _deg = [deg, deg]
     vander = polynomial.polyvander2d(x, y, _deg)
     c = np.linalg.lstsq(vander, z, rcond=None)[0]
     c = c.reshape(deg+1, -1)
     z = np.polynomial.polynomial.polyval2d(x, y, c)
-    return z
+    return z, c, rg_x, rg_y
 
 # Comienzan los cálculos
 for nick in FICHEROS:
@@ -85,16 +130,26 @@ for nick in FICHEROS:
     npoints, dim = points.shape[0], points.shape[1]
     xo, yo, zo = [points[:, i] for i in np.arange(dim)]
 
-    # Decomentar para eliminar la tendencia de z con un polinomio de grado DEG
-    USE_DETREND = True
-    DEG = 7
+    # Calculamos algunos estadísticos de las Z's
+    meanzo, stdzo = np.mean(zo), np.std(zo) # stdz es sqo
 
-    # Solo se aplica si se desea eliminar la tendencia de z
+    # Si se filtran las Z's se utilizan los límites siguientes:
+    lsupZ, linfZ = meanzo + n_stdzomax * stdzo, meanzo - n_stdzomin * stdzo
+
+    # set mask for z filtering
+    if FILTER_Z:
+        mask = (points[:, 2] > linfZ) & (points[:, 2] < lsupZ)
+        points = points[mask]
+        xo, yo, zo = [points[:, i] for i in np.arange(dim)]
+
+    # Se aplica si se desea eliminar la tendencia de z
     # Se intercambia la z sin tendencia con la zo original
     if USE_DETREND:
-        zo_detrend = detrend_fit(xo, yo, zo, deg=DEG)
-        zo = zo - zo_detrend
-        points = np.c_[points, zo, zo_detrend]
+        zo_trend, coef_pol, rg_x, rg_y = detrend_fit(xo, yo, zo, deg=DEG)
+        zo = zo - zo_trend
+
+    # Se concatenan y reordenan (x, y, zo-z_detrend, zo, z_detrend)
+        points = np.c_[points, zo, zo_trend]
         points = points[:, [0, 1, 3, 2, 4]]
 
     # Dimensiones espaciales, coordenadas, rango e intervalos
@@ -112,33 +167,22 @@ for nick in FICHEROS:
     ssko = skew(zo)
     skuo = kurtosis(zo, fisher=False)
 
-    # Si se filtran las Z's se utilizan los límites siguientes en función de la sqo
-    n_stdzo = 4
-    lsupZ, linfZ = meanzo + n_stdzo * stdzo, meanzo - n_stdzo * stdzo
-
     # Se calculan las diferencias de coordenadas para ver el intervalo de muestreo
     # Los puntos están alineados con el eje Y en sentido descendiente
     gradxo = np.diff(xo)
     gradyo = np.min(np.diff(yo))
 
-    # Proporción lineal (ventana) de la zona central a analizar (con el punto decimal)
-    prop = 1.0
+    # Límites de la ventana central a analizar
     umbrinx = xmino + rangxo * (1- prop)/2
     umbrsux = umbrinx + prop *rangxo
     umbriny = ymino + rangyo * (1- prop)/2
     umbrsuy = umbriny + prop *rangyo
 
-    # Filtro para obtener la ventana de estudio y la opción de filtrar las Z's
-    FILTER_Z = False
-
-    # set mask for x,y filtering
+    # set custom mask for x,y filtering
     mask = (points[:, 0] > umbrinx) & (points[:, 0] < umbrsux) \
             & (points[:, 1] > umbriny) & (points[:, 1] < umbrsuy)
 
-    # set mask for z filtering
-    if FILTER_Z:
-        mask = mask & (points[:, 2] > linfZ) & (points[:, 2] < lsupZ)
-
+    # Get the masked points
     xyz_filtered = points[mask]
 
     # Separo de nuevo las coordenadas de los puntos, ahora en la ventana
@@ -152,8 +196,7 @@ for nick in FICHEROS:
     rangz_x = rangz/rangx
     rangz_y = rangz/rangy
 
-    # Defino el paso y límites (disminuyo unos steps en los bordes) del grid
-    step = 16
+    # Límites (disminuyo unos steps en los bordes) del grid
     step2 = step * step
     _xmin, _xmax = xmin + 6 * step, xmax - 6 * step
     _ymin, _ymax = ymin + 6 * step, ymax - 6 * step
@@ -163,10 +206,16 @@ for nick in FICHEROS:
     grid_y, grid_x = np.mgrid[_ymax:_ymin:-step, _xmin:_xmax:step]
     extension = (np.min(grid_x), np.max(grid_x), np.min(grid_y), np.max(grid_y))
 
+    # Tendencia en el grid
+    if USE_DETREND:
+        g_x = np.asarray(grid_x[0])/rg_x
+        g_y = np.asarray(grid_y[:, 0])/rg_y
+        grid_zT = np.polynomial.polynomial.polygrid2d(g_x, g_y, coef_pol)
+
     # Interpolo Z
     grid_z1 = griddata((x, y), z, (grid_x, grid_y), method='cubic')
 
-    # La interpolación puede introducir valores nan (en bordes), se enmascaran
+    # La interpolación puede introducit valores nan (en bordes), se enmascaran
     grid_z1 = np.ma.array(grid_z1, mask=np.isnan(grid_z1)) # Use a mask
 
     # Media, según los ejes (axis=0: media por columnas: x's fijos en cada una)
@@ -201,7 +250,7 @@ for nick in FICHEROS:
     # Cálculo del valor medio absoluto de la pendiente (no desenmascaro)
     modz_x, modz_y = np.mean(np.abs(gradz_x)), np.mean(np.abs(gradz_y))
 
-    # For plotting hillshade: parámetros para el plotting
+    # For plotting hillshade: parámetros para el plotting propio
     az, elev = -20, 45
     azRad, elevRad = (360 - az + 90)*np.pi/180, (90-elev)*np.pi/180
 
@@ -311,18 +360,24 @@ for nick in FICHEROS:
         'sdry' : sdry
         }
 
-    # Quitamos el apellido al filename (las hojas de excel aceptan hasta 31 char.)
+    # Quitamos el apellido al filename (las hojas excel aceptan hasta 31 char.)
     filename = filename.replace('.xyz', '')
- 
+
     if USE_DETREND:
         filename = filename + "UT"
 
-    # Paso los resultados a un dataframe y los guardo en el excel
+    # Paso los resultados a un dataframe y se guardan en el excel
     pdsave = pd.DataFrame.from_dict(results, orient='index')
     pdsave.to_excel(WRITER, sheet_name=filename)
 
-    # Constante par definir si se crean las figuras
-    Make_Plots = False
+    # Defino algunas variables utilizadas en algunos gráficos
+    ap = aspectrad[~aspectrad.mask].ravel()
+    aspectgrad = 90 - ap * 180 / np.pi
+    aspect_hist, aspect_hist_bin = np.histogram(aspectgrad, bins=256)
+    frecang = aspect_hist/np.sum(aspect_hist)
+    ang = aspect_hist_bin*np.pi/180
+    angp = np.mean(ang)*180/np.pi
+    anf = np.diff(ang)
 
     if Make_Plots:
         # Gráficos (se crean varias figuras con plantilla nrows x ncols)
@@ -434,10 +489,8 @@ for nick in FICHEROS:
         ax5[1].set_title('y Slope hist')
 
         # Aspect angle hist
-        ap = aspectrad[~aspectrad.mask].ravel()
-        aspectrad = 90 - ap * 180 / np.pi
         smagrad = umask_smagrad * 180 / np.pi
-        pos61 = ax6[0].hist(aspectrad, bins=256)
+        pos61 = ax6[0].hist(aspectgrad, bins=256)
         ax6[0].set_xlabel(r'$Direction (ºN)$')
         ax6[0].set_ylabel(r'$Data number$')
         ax6[0].set_title('Aspect angle hist')
@@ -463,12 +516,13 @@ for nick in FICHEROS:
         # z hist
         pos71 = ax7[0].hist(z, bins=256)
         ax7[0].set_xlabel(r'$z$')
-        ax7[0].set_ylabel(r'$Data number$')
+        ax7[0].set_ylabel(r'$Data_number$')
         ax7[0].set_title('z distribution density')
 
+        # Variantes de hs
         ls = LightSource(azdeg=-20, altdeg=45)
         pos72 = ax7[1].imshow(ls.shade(grid_z1, cmap=plt.cm.gist_earth,\
-        vert_exag=10, blend_mode='hsv', vmin=-32, vmax=20))
+        vert_exag=10, blend_mode='hsv', vmin=-32, vmax=20), extent=extension)
 
         ls = LightSource(azdeg=70, altdeg=45)
         pos81 = ax8[0].imshow(ls.shade(grid_z1, cmap=plt.cm.gist_earth,\
@@ -486,10 +540,6 @@ for nick in FICHEROS:
         fig5 = plt.figure(figsize=(8, 8))
         fig5.suptitle(filename)
         ax = fig5.add_axes([0.1, 0.1, 0.8, 0.8], polar=True)
-        frecang = pos61[0]/np.sum(pos61[0])
-        ang = pos61[1]*np.pi/180
-        angp = np.mean(ang)*180/np.pi
-        anf = np.diff(ang)
         bars = ax.bar(ang[0:-1], frecang, width=anf, bottom=0.0)
         ax.set_thetagrids(np.arange(0, 360, 10), labels=np.arange(0, 360, 10))
         ax.set_theta_zero_location("N")
@@ -503,5 +553,120 @@ for nick in FICHEROS:
         # Se cierran las figuras (con plt.ioff no es necesario pero...)
         plt.close('all')
 
-WRITER.save()
-WRITER.close()
+if USE_WRITER:
+    WRITER.save()
+    WRITER.close()
+
+
+# Utilidades
+
+def fig_grid2D(grid2D):
+    """ se crea la imagen hillshade de un objeto 2D, vg grid_z1"""
+    fig_p = plt.figure(figsize=(5, 5))
+    fig_p.suptitle('Raw Data (hillshade image)\n\nz exaggerattion x 10')
+
+    # Añado el eje y limito su tamaño para que quepan los numericos
+    ax = fig_p.add_axes([0.2, 0.2, 0.6, 0.6])
+    ax.set_xlabel(r'$X  (\mu m)$')
+    ax.set_ylabel(r'$Y  (\mu m)$', labelpad=-0.2)
+
+    # Se crea una array de ceros, y se le añade el max y el min
+    # Es un artificio para poder dibujar el colobar
+    tru = np.zeros_like(grid2D)
+    tru[0, 0], tru[0, 1] = np.min(grid2D), np.max(grid2D)
+
+    # Use a proxy artist for the colorbar...se crea y elimina
+    im = ax.imshow(tru, cmap=plt.cm.gist_earth, extent=extension)
+    im.remove()
+
+    # La iluminación
+    ls = LightSource(azdeg=-20, altdeg=45)
+
+    # Y finalmente la imagen
+    ax.imshow(ls.shade(grid2D, cmap=plt.cm.gist_earth,\
+    vert_exag=10, blend_mode='hsv', vmin=-60, vmax=25), extent=extension)
+
+    # Fraction y pad son para obtener una buena disposición del colobar
+    barf = plt.colorbar(im, fraction=0.046, pad=0.04)
+    barf.ax.set_ylabel(r'$Z  (\mu m)$', labelpad=0, y=0.5)
+
+    # Se guarda
+    filename = "Raw_data"
+    if USE_DETREND:
+        filename = filename + "UT"
+
+    fig_p.savefig(filename, dpi=1200)
+    return
+
+def fig_hist(z):
+    """ se crea el histograma"""
+    fig_p = plt.figure(figsize=(2.5, 2.5))
+    fig_p.suptitle('z Probability Density\n ')
+    ax = fig_p.add_axes([0.35, 0.2, 0.6, 0.6])
+
+    ax.hist(z, bins=256)
+    ax.set_xlabel(r'$z (\mu m)$')
+    ax.set_ylabel('data number', style='oblique')
+    ax.set_title('')
+
+    fig_p.savefig('histZ', dpi=1200)
+    return
+
+def fig_roseta():
+    """ se crea la roseta de distribución direcciones de máxima pendiente"""
+    fig_p = plt.figure(figsize=(3, 3))
+    fig_p.suptitle('Steepest Slope Direction\n Rose Diagram')
+
+    #Se define el origen del eje y su tamaño (ancho y altura en proporción)
+    ax = fig_p.add_axes([0.2, 0.2, 0.6, 0.55], polar=True)
+    ax.bar(ang[0:-1], frecang, width=anf, bottom=0.0)
+    ax.set_thetagrids(np.arange(0, 360, 45), labels=np.arange(0, 360, 45))
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+    ax.set_rgrids([])
+    ax.set_title('')
+
+    fig_p.savefig('roseta', dpi=1200)
+    return
+
+if PLOT_3D:
+    from mpl_toolkits import mplot3d as mpl
+
+
+
+    # Se crea la máscara y se seleccionas los puntos a dibujar
+    m_points = (points[:, 0] < Max_Cx) & (points[:, 0] > Min_Cx) \
+                & (points[:, 1] < Max_Cy) & (points[:, 1] > Min_Cy)
+    p_points = points[m_points]
+
+    # Se crea el plot
+    fig_3D, ax1 = plt.subplots(figsize=(5, 5))
+    ax1 = fig_3D.gca(projection='3d')
+    ax1.plot_trisurf(p_points[:, 0], p_points[:, 1], p_points[:, 2],\
+                     antialiased=True, cmap=plt.cm.gist_earth)
+    ax1.set_xlabel(r'$X  (\mu m)$')
+    ax1.set_ylabel(r'$Y  (\mu m)$')
+    ax1.set_zlabel(r'$Z  (\mu m)$')
+
+
+if USE_MAYAVI:
+    from mayavi import mlab
+
+    # Por ejemplo:
+    mlab.surf(grid_x, grid_y, grid_z1)
+
+
+#    ax = plt.axes(projection='3d')
+#    mpl.Axes3D.plot_trisurf(p_points[:, 0], p_points[:, 1], p_points[:, 2])
+#    ax.contour3D(p_points[:, 0], p_points[:, 1], p_points[:, 2], 5, cmap='binary')
+##    ax.contour3D(grid_x, grid_y, gradz_y, 50, cmap='binary')
+#    ax.set_xlabel('x')
+#    ax.set_ylabel('y')
+#    ax.set_zlabel('z')
+##
+##ax = plt.axes(projection='3d')
+#ax.plot_surface(grid_x, grid_y, grid_z1, rstride=1, cstride=1,
+#                cmap='Greys', edgecolor='none')
+
+#
+#np.savetxt('puntos3D.txt', fichero, delimiter=';') #se guarda
