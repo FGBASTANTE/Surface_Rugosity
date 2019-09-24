@@ -14,7 +14,7 @@ import numpy as np
 PLT_OFF = True
 
 # Ruta al directorio de los raw data
-RAW_FOLDER = "C:/Users/Fernando/Duro/Fernando/A_Google_Drive/Python_Scripts/Tilt_test/I.Perez_Cuarcita"
+RAW_FOLDER = "C:/Users/User_name/Raw_Data/Cuarcita"
 
 # Apellido que indica su formato (.xyz en este caso) de los ficheros raw
 APELLIDO = '.xyz'
