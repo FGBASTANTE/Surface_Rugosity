@@ -469,7 +469,7 @@ for nick in FICHEROS:
         filenamefig2 = str(filename) + "_P_" + str(prop) + "_imagrdtext" + ".png"
         fig2.savefig(filenamefig2, dpi=1200)
 
-
+           
         fig3, (ax5, ax6) = plt.subplots(figsize=(15, 10),\
                nrows=2, ncols=2, constrained_layout=False)
         fig3.suptitle(filename)
@@ -549,14 +549,12 @@ for nick in FICHEROS:
         filenamefig5 = str(filename) + "_P_" + str(prop) +"_roseta.png"
         fig5.savefig(filenamefig5, dpi=2400)
 
-
         # Se cierran las figuras (con plt.ioff no es necesario pero...)
         plt.close('all')
 
 if USE_WRITER:
     WRITER.save()
     WRITER.close()
-
 
 # Utilidades
 
@@ -632,8 +630,6 @@ def fig_roseta():
 if PLOT_3D:
     from mpl_toolkits import mplot3d as mpl
 
-
-
     # Se crea la máscara y se seleccionas los puntos a dibujar
     m_points = (points[:, 0] < Max_Cx) & (points[:, 0] > Min_Cx) \
                 & (points[:, 1] < Max_Cy) & (points[:, 1] > Min_Cy)
@@ -647,7 +643,6 @@ if PLOT_3D:
     ax1.set_xlabel(r'$X  (\mu m)$')
     ax1.set_ylabel(r'$Y  (\mu m)$')
     ax1.set_zlabel(r'$Z  (\mu m)$')
-
 
 if USE_MAYAVI:
     from mayavi import mlab
