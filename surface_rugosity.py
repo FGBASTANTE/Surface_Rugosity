@@ -14,112 +14,80 @@ multithreading
 """
 # Se importan los módulos que se van a utilizar
 
+from io import StringIO
 import os
 from pathlib import Path
-from io import StringIO
-import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.colors import LightSource
+import matplotlib.cm as cm
+import numpy as np
 from scipy.interpolate import griddata
-from scipy.stats import kurtosis
-from scipy.stats import skew
+from scipy.stats import kurtosis, skew
 import pandas as pd
 from openpyxl import load_workbook
+from ini_surface_rugosity import fig_roseta, fig_hist, fig_grid, fig_grid2D, \
+    detrend_fit
+from ini_surface_rugosity import RAW_FOLDER, APELLIDO, SAVE_SUBDIR, MAKE_PLOTS
+from ini_surface_rugosity import PLOT_RAW, PLOT_3D, USE_MAYAVI, PROP, STEP, \
+    USE_DETREND, USE_WRITER, DEG, FILTER_Z, res_nam, PLT_OFF
 
-# Evitamos que se generen plots por defecto: consumen recursos
-#plt.ioff()
+# Evitar que se muestren plots: consumen recursos
+if PLT_OFF:
+    plt.ioff()
 
-# Se introduce la ruta al directorio de los raw data
-DATA_FOLDER = Path("E:/Tilt_test/I.Perez_Caliza")
+# Ruta al directorio de los raw data
+raw_folder = Path(RAW_FOLDER)
 
-# Y el apellido que indica su formato (terminan en .xyz en este caso)
-APELLIDO = '.xyz'
-
-# Se lee el nombre de los ficheros de puntos
-FICHEROS = [files for files in os.listdir(DATA_FOLDER) \
+# Se leen los nombres de los ficheros de puntos
+FICHEROS = [files for files in os.listdir(raw_folder) \
            if files.endswith(APELLIDO)]
 
-# Parámetro para definir si se crean las figuras
-Make_Plots = False
+# Ruta del directorio para guardar los resultados
+save_dir = os.path.join(os.getcwd(), SAVE_SUBDIR)
+
+# Se modifica el result filename cuando se quita tendencia y/o utilizar filtro
+if USE_DETREND:
+    res_nam = res_nam + '_UT'
+if FILTER_Z:
+    res_nam = res_nam + '_F'
 
 # Algunos parámetros por defecto para los plots (figsize en pulgadas)
-plt.rcParams['figure.figsize'] = [6.0, 4.0]
-plt.rcParams['figure.dpi'] = 100
-
-# Parámetro para ver una pequeña zona en 3D
-PLOT_3D = False
+if MAKE_PLOTS:
+    plt.rcParams['figure.figsize'] = [6.0, 4.0]
+    plt.rcParams['figure.dpi'] = 100
 
 # coordenadas de la zona de visualización
-Min_Cx, Max_Cx = 1500, 3000
-Min_Cy, Max_Cy = 2500, 5000
+if PLOT_3D:
+    Min_Cx, Max_Cx = 1500, 3000
+    Min_Cy, Max_Cy = 2500, 5000
 
-# Para interactuar con Mayavi:
-USE_MAYAVI = False
-
-# Proporción lineal (ventana) de la zona central a analizar (con punto decimal)
-prop = 1.0
-
-# Espaciado del grid (x/y) de trabajo en unidades del sistema de coordenadas
-step = 16
-
-# True para eliminar la tendencia de z con un polinomio de grado DEG
-USE_DETREND = True
-DEG = 7
-
-# True para filtrar las Z's a partir n_stdz (max y min) desviaciones estándar
-FILTER_Z = False
-n_stdzomax, n_stdzomin = 4, 100
-
-# Nombre del fichero excel donde se guardarán los resultados
-RES_NAM = "pruebas"
-
-# Lo modificamos en caso de quitar tendencia y/o utilizar filtro
-if USE_DETREND: RES_NAM = RES_NAM + '_UT'
-if FILTER_Z: RES_NAM = RES_NAM + '_F'
-RES_NAM = RES_NAM + '.xlsx'
-
-# Para guardar el fichero excel en disco duro
-# Si no se guarda el fichero queda en memoria
-USE_WRITER = True
+# Filtrar las Z's a partir n_stdz (max y min) desviaciones estándar
+if FILTER_Z:
+    n_stdzomax, n_stdzomin = 4, 100
 
 # Decomentar para hacer el análisis de solo algún fichero
-FICHEROS = [FICHEROS[5]]
+#FICHEROS = [FICHEROS[5]]
+
+# Ruta y fichero para guardar los resultados
+file_path = os.path.join(save_dir, res_nam + '.xlsx')
 
 # Se abre el fichero para guardar resultados (o se crea si no existe)
-# Si existe NO SOBREESCRIBE las hojas
 try:
-    book = load_workbook(RES_NAM)
-    WRITER = pd.ExcelWriter(RES_NAM, engine='openpyxl')
-    WRITER.book = book
-    WRITER.sheets = dict((ws.title, ws) for ws in book.worksheets)
-    print(WRITER.sheets)
+    book = load_workbook(file_path)
+    writer = pd.ExcelWriter(file_path, engine='openpyxl')
+    writer.book = book
+    writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
+    print(writer.sheets)
 except:
-    WRITER = pd.ExcelWriter(RES_NAM)
-
-def detrend_fit(x, y, z, deg):
-    """ Función para eliminar la tendencia de una superficie z=z(x, y)
-     utilizando un polinomio de grado deg en x e y """
-    from numpy.polynomial import polynomial
-
-    # Normalizo el grid para que no den valores descomunales
-    rg_x, rg_y = 0.5*(np.max(x) - np.min(x)), 0.5*(np.max(y) - np.min(y))
-    x = np.asarray(x)/rg_x
-    y = np.asarray(y)/rg_y
-    z = np.asarray(z)
-
-    _deg = [deg, deg]
-    vander = polynomial.polyvander2d(x, y, _deg)
-    c = np.linalg.lstsq(vander, z, rcond=None)[0]
-    c = c.reshape(deg+1, -1)
-    z = np.polynomial.polynomial.polyval2d(x, y, c)
-    return z, c, rg_x, rg_y
+    print("Se creará un fichero de resultados nuevo")
+    writer = pd.ExcelWriter(file_path)
 
 # Comienzan los cálculos
 for nick in FICHEROS:
     # Nombre del archivo a analizar
     filename = nick
+
     # Abro y leo todos los datos
-    with open(DATA_FOLDER / filename, 'r') as pfile:
+    with open(raw_folder / filename, 'r') as pfile:
         points = pfile.read()
         # los convierto en números; los delimitadores son tabulaciones
         points = np.genfromtxt(StringIO(points))
@@ -133,11 +101,10 @@ for nick in FICHEROS:
     # Calculamos algunos estadísticos de las Z's
     meanzo, stdzo = np.mean(zo), np.std(zo) # stdz es sqo
 
-    # Si se filtran las Z's se utilizan los límites siguientes:
-    lsupZ, linfZ = meanzo + n_stdzomax * stdzo, meanzo - n_stdzomin * stdzo
-
     # set mask for z filtering
     if FILTER_Z:
+        # Si se filtran las Z's se utilizan los límites siguientes:
+        lsupZ, linfZ = meanzo + n_stdzomax * stdzo, meanzo - n_stdzomin * stdzo
         mask = (points[:, 2] > linfZ) & (points[:, 2] < lsupZ)
         points = points[mask]
         xo, yo, zo = [points[:, i] for i in np.arange(dim)]
@@ -167,16 +134,16 @@ for nick in FICHEROS:
     ssko = skew(zo)
     skuo = kurtosis(zo, fisher=False)
 
-    # Se calculan las diferencias de coordenadas para ver el intervalo de muestreo
-    # Los puntos están alineados con el eje Y en sentido descendiente
+    # Se calculan las diferencias de coordenadas para ver el intervalo de
+    # muestreo. Los puntos están alineados con el eje Y en sentido descendiente
     gradxo = np.diff(xo)
     gradyo = np.min(np.diff(yo))
 
     # Límites de la ventana central a analizar
-    umbrinx = xmino + rangxo * (1- prop)/2
-    umbrsux = umbrinx + prop *rangxo
-    umbriny = ymino + rangyo * (1- prop)/2
-    umbrsuy = umbriny + prop *rangyo
+    umbrinx = xmino + rangxo * (1- PROP)/2
+    umbrsux = umbrinx + PROP *rangxo
+    umbriny = ymino + rangyo * (1- PROP)/2
+    umbrsuy = umbriny + PROP *rangyo
 
     # set custom mask for x,y filtering
     mask = (points[:, 0] > umbrinx) & (points[:, 0] < umbrsux) \
@@ -197,13 +164,12 @@ for nick in FICHEROS:
     rangz_y = rangz/rangy
 
     # Límites (disminuyo unos steps en los bordes) del grid
-    step2 = step * step
-    _xmin, _xmax = xmin + 6 * step, xmax - 6 * step
-    _ymin, _ymax = ymin + 6 * step, ymax - 6 * step
+    _xmin, _xmax = xmin + 6 * STEP, xmax - 6 * STEP
+    _ymin, _ymax = ymin + 6 * STEP, ymax - 6 * STEP
 
     # y creo el grid (se invierte el orden y el signo del step en el eje Y
     # para mantener la dirección y el sentido de los ejes)
-    grid_y, grid_x = np.mgrid[_ymax:_ymin:-step, _xmin:_xmax:step]
+    grid_y, grid_x = np.mgrid[_ymax:_ymin:-STEP, _xmin:_xmax:STEP]
     extension = (np.min(grid_x), np.max(grid_x), np.min(grid_y), np.max(grid_y))
 
     # Tendencia en el grid
@@ -233,8 +199,8 @@ for nick in FICHEROS:
     sa = np.mean(np.abs(umask_grid_z1 - meanz))
 
     # Gradientes: primero en dirección vertical, luego en la horizontal
-    # Gradient usa: (fn+1 - fn-1)/(2 x step))
-    gradz_y, gradz_x = np.gradient(grid_z1, step)
+    # Gradient usa: (fn+1 - fn-1)/(2 x STEP))
+    gradz_y, gradz_x = np.gradient(grid_z1, STEP)
 
     # Al cuadrado, quito la máscara y calculo el rsm, el valor absoluto, etc.
     grad2_x, grad2_y = np.square(gradz_x), np.square(gradz_y)
@@ -269,7 +235,7 @@ for nick in FICHEROS:
 
     # Repito con las diferencias de primer orden (se pierde un dato)
     # Para dirección vertical axis=0, el sentido es i+1 - i, o sea, al revés
-    slopez_y, slopez_x = np.diff(grid_z1, axis=0)/step, np.diff(grid_z1, axis=1)/step
+    slopez_y, slopez_x = np.diff(grid_z1, axis=0)/STEP, np.diff(grid_z1, axis=1)/STEP
     ravez_x, ravez_y = slopez_x[~slopez_x.mask], slopez_y[~slopez_y.mask]
 
     # Distancia real frente a la proyectada
@@ -292,7 +258,7 @@ for nick in FICHEROS:
     mod1z_y = np.mean(np.abs(ravez_y))
 
     # se calculan las segundas derivadas
-    slopez_xx, slopez_yy = np.diff(slopez_x, axis=1)/step, np.diff(slopez_y, axis=0)/step
+    slopez_xx, slopez_yy = np.diff(slopez_x, axis=1)/STEP, np.diff(slopez_y, axis=0)/STEP
     ravez_xx, ravez_yy = slopez_xx[~slopez_xx.mask], slopez_yy[~slopez_yy.mask]
 
     # Unos cuantos estadísticos más
@@ -304,15 +270,23 @@ for nick in FICHEROS:
     ds_y = np.mean((np.diff(np.sign(slopez_y), axis=0) != 0)*1)
 
     # La mitad peaks y la otra mitad pits; la longitud de onda media será:
-    l_x = step / (ds_x/2)
-    l_y = step / (ds_y/2)
+    l_x = STEP / (ds_x/2)
+    l_y = STEP / (ds_y/2)
+
+    # Quitamos el apellido al filename (las hojas excel aceptan hasta 31 char.)
+    filename = filename.replace('.xyz', '')
+
+    if USE_DETREND:
+        filename = filename + "UT"
+    if FILTER_Z:
+        filename = filename + "Z"
 
     # Diccionario con los resultados que queremos guardar
     results = {
         'fichero': filename,
         'filter' : FILTER_Z,
-        'step' : step,
-        'proporción' : prop,
+        'step' : STEP,
+        'proporción' : PROP,
         'points number' : n,
         'rangex' : rangx,
         'rangey' : rangy,
@@ -360,17 +334,11 @@ for nick in FICHEROS:
         'sdry' : sdry
         }
 
-    # Quitamos el apellido al filename (las hojas excel aceptan hasta 31 char.)
-    filename = filename.replace('.xyz', '')
-
-    if USE_DETREND:
-        filename = filename + "UT"
-
-    # Paso los resultados a un dataframe y se guardan en el excel
+    # Se pason los resultados a un dataframe y se guardan en el excel
     pdsave = pd.DataFrame.from_dict(results, orient='index')
-    pdsave.to_excel(WRITER, sheet_name=filename)
+    pdsave.to_excel(writer, sheet_name=filename)
 
-    # Defino algunas variables utilizadas en algunos gráficos
+    # Definición de algunas variables utilizadas en gráficos
     ap = aspectrad[~aspectrad.mask].ravel()
     aspectgrad = 90 - ap * 180 / np.pi
     aspect_hist, aspect_hist_bin = np.histogram(aspectgrad, bins=256)
@@ -379,260 +347,91 @@ for nick in FICHEROS:
     angp = np.mean(ang)*180/np.pi
     anf = np.diff(ang)
 
-    if Make_Plots:
-        # Gráficos (se crean varias figuras con plantilla nrows x ncols)
-        fig1, (ax1, ax2) = plt.subplots(figsize=(10, 15),\
-               nrows=2, ncols=2, constrained_layout=False)
-        fig1.subplots_adjust(top=0.92, bottom=0.08, left=0.10, right=0.95,\
-                             hspace=0.25, wspace=0.35)
-        fig1.suptitle(filename)
+    if MAKE_PLOTS:
 
-        # Crear esta figura consume mucho tiempo, decomentar si se desea
-        # Z's originales
-    #    pos11 = ax1[0].scatter(xo, yo, c=zo, vmin=zmino, vmax=zmaxo)
-    #    ax1[0].set_xlabel(r'$X  (\mu m)$')
-    #    ax1[0].set_ylabel(r'$Y  (\mu m)$')
-    #    ax1[0].set_title('raw data')
-    #    bar11 = fig1.colorbar(pos11, ax=ax1[0])
-    #    bar11.ax.set_ylabel(r'$Z  (\mu m)$', labelpad=0, y=0.5)
-    #    ax1[0].axis('equal')
+        # Crear esta figura consume mucho tiempo
+        if PLOT_RAW:
+            fig_raw, ax_raw = plt.subplots()
+            ax_raw.axis('equal')
+            ax_raw.set_xlabel(r'$X  (\mu m)$')
+            ax_raw.set_ylabel(r'$Y  (\mu m)$')
+            ax_raw.set_title('raw data')
+            pos_raw = ax_raw.scatter(xo, yo, c=zo, vmin=zmino, vmax=zmaxo)
+            bar_raw = fig_raw.colorbar(pos_raw)
+            bar_raw.ax.set_ylabel(r'$Z  (\mu m)$', labelpad=0, y=0.5)
+            fig_nam = 'raw data' + filename
+            fig_raw.savefig(fig_nam, dpi=300)
 
         # Z's interpoladas
-        pos12 = ax1[1].imshow(grid_z1, extent=extension, aspect='equal')
-        ax1[1].set_xlabel(r'$X  (\mu m)$')
-        ax1[1].set_ylabel(r'$Y  (\mu m)$')
-        ax1[1].set_title('interpolate data')
-        bar12 = fig1.colorbar(pos12, ax=ax1[1])
-        bar12.ax.set_ylabel(r'$Z  (\mu m)$')
+        titt = 'raw data_int'
+        bar_lab = r'$Z  (\mu m)$'
+        fig_grid(grid_z1, titt, bar_lab, extension, filename)
 
-        # Z's gradient y
-        pos21 = ax2[0].imshow(gradz_y, extent=extension)
-        ax2[0].set_xlabel(r'$X  (\mu m)$')
-        ax2[0].set_ylabel(r'$Y  (\mu m)$')
-        ax2[0].set_title('gradient y data')
-        bar21 = fig1.colorbar(pos21, ax=ax2[0])
-        bar21.ax.set_ylabel(r'$Z grad_y$')
+        # Z's gradient:  x and y (also with slope)
+        titt = 'gradient x data'
+        bar_lab = r'$Z grad_x$'
+        fig_grid(gradz_x, titt, bar_lab, extension, filename)
 
-        # Z's gradient x
-        pos22 = ax2[1].imshow(gradz_x, extent=extension)
-        ax2[1].set_xlabel(r'$X  (\mu m)$')
-        ax2[1].set_ylabel(r'$Y  (\mu m)$')
-        ax2[1].set_title('gradient x data')
-        bar22 = fig1.colorbar(pos22, ax=ax2[1])
-        bar22.ax.set_ylabel(r'$Z grad_x$')
+        titt = 'slope x'
+        fig_grid(slopez_x, titt, bar_lab, extension, filename)
 
-        # Se guarda
-        filenamefig1 = str(filename) + "_P_" + str(prop) + "_imagrd" + ".png"
-        fig1.savefig(filenamefig1, dpi=1200)
+        titt = 'gradient y data'
+        bar_lab = r'$Z grad_y$'
+        fig_grid(gradz_y, titt, bar_lab, extension, filename)
 
+        titt = 'slope y'
+        bar_lab = r'$Z grad_y$'
+        fig_grid(slopez_y, titt, bar_lab, extension, filename)
 
-        fig2, (ax3, ax4) = plt.subplots(figsize=(10, 15),\
-               nrows=2, ncols=2, constrained_layout=False)
-        fig2.suptitle(filename)
-        fig2.subplots_adjust(top=0.92, bottom=0.08, left=0.10, right=0.95, hspace=0.25,
-                             wspace=0.35)
-
-        # Z's gradient y (primera diferencia)
-        pos31 = ax3[0].imshow(slopez_y, extent=extension)
-        ax3[0].set_xlabel(r'$X  (\mu m)$')
-        ax3[0].set_ylabel(r'$Y  (\mu m)$')
-        ax3[0].set_title('gradient y data')
-        bar31 = fig2.colorbar(pos31, ax=ax3[0])
-        bar31.ax.set_ylabel(r'$Z grad_y$')
-
-        # Z's gradient x (primera diferencia)
-        pos32 = ax3[1].imshow(slopez_x, extent=extension)
-        ax3[1].set_xlabel(r'$X  (\mu m)$')
-        ax3[1].set_ylabel(r'$Y  (\mu m)$')
-        ax3[1].set_title('gradient x data')
-        bar32 = fig2.colorbar(pos32, ax=ax3[1])
-        bar32.ax.set_ylabel(r'$Z grad_x$')
-
-        # Texture in x and y direction
-        pos411 = ax4[0].imshow(grad2_xy, cmap='coolwarm')
-        pos412 = ax4[0].imshow(hs, cmap='gray', alpha=0.5)
-        ax4[0].invert_yaxis()
-        ax4[0].set_xlabel('X')
-        ax4[0].set_ylabel('Y')
-        ax4[0].set_title('Textura')
-        ax4[0].invert_yaxis()
-
-        # Aspect angle
-        pos42 = ax4[1].imshow(aspectrad, extent=extension)
-        ax4[1].set_xlabel(r'$X  (\mu m)$')
-        ax4[1].set_ylabel(r'$Y  (\mu m)$')
-        ax4[1].set_title('Aspect angle')
-        bar42 = fig2.colorbar(pos42, ax=ax4[1])
-        bar42.ax.set_ylabel(r'rad')
-
-        # Se guarda
-        filenamefig2 = str(filename) + "_P_" + str(prop) + "_imagrdtext" + ".png"
-        fig2.savefig(filenamefig2, dpi=1200)
-
-
-        fig3, (ax5, ax6) = plt.subplots(figsize=(15, 10),\
-               nrows=2, ncols=2, constrained_layout=False)
-        fig3.suptitle(filename)
-        fig3.subplots_adjust(top=0.92, bottom=0.08, left=0.10, right=0.95, hspace=0.25,
-                             wspace=0.35)
-
-        # x Slope hist
-        pos51 = ax5[0].hist(ravez_x, bins=256, range=(-1., 1.))
-        ax5[0].set_xlabel(r'$x Slope$')
-        ax5[0].set_ylabel(r'$Data number$')
-        ax5[0].set_title('x Slope hist')
-
-        # y Slope hist
-        pos52 = ax5[1].hist(ravez_y, bins=256, range=(-1., 1.))
-        ax5[1].set_xlabel(r'$y Slope$')
-        ax5[1].set_ylabel(r'$Data number$')
-        ax5[1].set_title('y Slope hist')
-
-        # Aspect angle hist
-        smagrad = umask_smagrad * 180 / np.pi
-        pos61 = ax6[0].hist(aspectgrad, bins=256)
-        ax6[0].set_xlabel(r'$Direction (ºN)$')
-        ax6[0].set_ylabel(r'$Data number$')
-        ax6[0].set_title('Aspect angle hist')
-
-        # Z`s trends in x and y direction
-        pos611 = ax6[1].plot(grid_y[:, 0], meanZ_y, 'r')
-        pos612 = ax6[1].plot(grid_x[0, :], meanZ_x)
-        ax6[1].set_xlabel('X (blue) or Y (red)')
-        ax6[1].set_ylabel('z')
-        ax6[1].set_title('Tendencias')
-
-        # Se guarda
-        filenamefig3 = str(filename) + "_P_" + str(prop) + "_hist" + ".png"
-        fig3.savefig(filenamefig3, dpi=1200)
-
-
-        fig4, (ax7, ax8) = plt.subplots(figsize=(15, 10),\
-               nrows=2, ncols=2, constrained_layout=False)
-        fig4.subplots_adjust(top=0.92, bottom=0.08, left=0.10, right=0.95,
-                             hspace=0.25, wspace=0.35)
-        fig4.suptitle(filename)
+        # Se traza un hill shade con los datos"
+        titt = 'raw data_hs'
+        fig_grid2D(grid_z1, titt, extension, filename)
 
         # z hist
-        pos71 = ax7[0].hist(z, bins=256)
-        ax7[0].set_xlabel(r'$z$')
-        ax7[0].set_ylabel(r'$Data_number$')
-        ax7[0].set_title('z distribution density')
+        xlab = r'$z$'
+        ylab = r'$Data_number$'
+        titt = 'z distribution density'
+        fig_hist(z, xlab, ylab, titt, filename)
 
-        # Variantes de hs
-        ls = LightSource(azdeg=-20, altdeg=45)
-        pos72 = ax7[1].imshow(ls.shade(grid_z1, cmap=plt.cm.gist_earth,\
-        vert_exag=10, blend_mode='hsv', vmin=-32, vmax=20), extent=extension)
+        # Grad_x Slope hist
+        xlab = r'$grad_z$'
+        titt = 'x Slope hist'
+        fig_hist(ravez_x, xlab, ylab, titt, filename)
 
-        ls = LightSource(azdeg=70, altdeg=45)
-        pos81 = ax8[0].imshow(ls.shade(grid_z1, cmap=plt.cm.gist_earth,\
-        vert_exag=10, blend_mode='hsv', vmin=-32, vmax=20))
+        # Grad_y Slope hist
+        titt = 'y Slope hist'
+        fig_hist(ravez_y, xlab, ylab, titt, filename)
 
-        ls = LightSource(azdeg=-20, altdeg=45)
-        pos821 = ax8[1].imshow(grad2_xy, cmap='coolwarm', vmin=-32, vmax=20)
-        pos822 = ax8[1].imshow(hs, cmap='gray', alpha=0.5)
-
-        # Se guarda
-        filenamefig4 = str(filename) + "_P_" + str(prop) +"_hisZ.png"
-        fig4.savefig(filenamefig4, dpi=2400)
+        # Aspect angle hist
+        xlab = r'$Direction (ºN)$'
+        titt = 'Aspect angle hist'
+        fig_hist(aspectgrad, xlab, ylab, titt, filename)
 
         # Polar diagram
-        fig5 = plt.figure(figsize=(8, 8))
-        fig5.suptitle(filename)
-        ax = fig5.add_axes([0.1, 0.1, 0.8, 0.8], polar=True)
-        bars = ax.bar(ang[0:-1], frecang, width=anf, bottom=0.0)
-        ax.set_thetagrids(np.arange(0, 360, 10), labels=np.arange(0, 360, 10))
-        ax.set_theta_zero_location("N")
-        ax.set_theta_direction(-1)
+        filename_ros = filename +"_roseta.png"
+        fig_roseta(ang, frecang, anf, filename_ros)
 
-        # Se guarda
-        filenamefig5 = str(filename) + "_P_" + str(prop) +"_roseta.png"
-        fig5.savefig(filenamefig5, dpi=2400)
-
+        # Z`s trends in x and y direction
+        fig_trend, ax_trend = plt.subplots()
+        ax_trend.plot(grid_y[:, 0], meanZ_y, 'r')
+        ax_trend.plot(grid_x[0, :], meanZ_x)
+        ax_trend.set_xlabel('X (blue) or Y (red)')
+        ax_trend.set_ylabel('z')
+        ax_trend.set_title('x/y trends')
+        fig_nam = 'x and y trends' + filename
+        fig_trend.savefig(fig_nam, dpi=300)
 
         # Se cierran las figuras (con plt.ioff no es necesario pero...)
         plt.close('all')
 
+# Se guardan los resultados en disco y se cierra el fichero
 if USE_WRITER:
-    WRITER.save()
-    WRITER.close()
-
+    writer.save()
+    writer.close()
 
 # Utilidades
-
-def fig_grid2D(grid2D):
-    """ se crea la imagen hillshade de un objeto 2D, vg grid_z1"""
-    fig_p = plt.figure(figsize=(5, 5))
-    fig_p.suptitle('Raw Data (hillshade image)\n\nz exaggerattion x 10')
-
-    # Añado el eje y limito su tamaño para que quepan los numericos
-    ax = fig_p.add_axes([0.2, 0.2, 0.6, 0.6])
-    ax.set_xlabel(r'$X  (\mu m)$')
-    ax.set_ylabel(r'$Y  (\mu m)$', labelpad=-0.2)
-
-    # Se crea una array de ceros, y se le añade el max y el min
-    # Es un artificio para poder dibujar el colobar
-    tru = np.zeros_like(grid2D)
-    tru[0, 0], tru[0, 1] = np.min(grid2D), np.max(grid2D)
-
-    # Use a proxy artist for the colorbar...se crea y elimina
-    im = ax.imshow(tru, cmap=plt.cm.gist_earth, extent=extension)
-    im.remove()
-
-    # La iluminación
-    ls = LightSource(azdeg=-20, altdeg=45)
-
-    # Y finalmente la imagen
-    ax.imshow(ls.shade(grid2D, cmap=plt.cm.gist_earth,\
-    vert_exag=10, blend_mode='hsv', vmin=-60, vmax=25), extent=extension)
-
-    # Fraction y pad son para obtener una buena disposición del colobar
-    barf = plt.colorbar(im, fraction=0.046, pad=0.04)
-    barf.ax.set_ylabel(r'$Z  (\mu m)$', labelpad=0, y=0.5)
-
-    # Se guarda
-    filename = "Raw_data"
-    if USE_DETREND:
-        filename = filename + "UT"
-
-    fig_p.savefig(filename, dpi=1200)
-    return
-
-def fig_hist(z):
-    """ se crea el histograma"""
-    fig_p = plt.figure(figsize=(2.5, 2.5))
-    fig_p.suptitle('z Probability Density\n ')
-    ax = fig_p.add_axes([0.35, 0.2, 0.6, 0.6])
-
-    ax.hist(z, bins=256)
-    ax.set_xlabel(r'$z (\mu m)$')
-    ax.set_ylabel('data number', style='oblique')
-    ax.set_title('')
-
-    fig_p.savefig('histZ', dpi=1200)
-    return
-
-def fig_roseta():
-    """ se crea la roseta de distribución direcciones de máxima pendiente"""
-    fig_p = plt.figure(figsize=(3, 3))
-    fig_p.suptitle('Steepest Slope Direction\n Rose Diagram')
-
-    #Se define el origen del eje y su tamaño (ancho y altura en proporción)
-    ax = fig_p.add_axes([0.2, 0.2, 0.6, 0.55], polar=True)
-    ax.bar(ang[0:-1], frecang, width=anf, bottom=0.0)
-    ax.set_thetagrids(np.arange(0, 360, 45), labels=np.arange(0, 360, 45))
-    ax.set_theta_zero_location("N")
-    ax.set_theta_direction(-1)
-    ax.set_rgrids([])
-    ax.set_title('')
-
-    fig_p.savefig('roseta', dpi=1200)
-    return
-
 if PLOT_3D:
     from mpl_toolkits import mplot3d as mpl
-
-
 
     # Se crea la máscara y se seleccionas los puntos a dibujar
     m_points = (points[:, 0] < Max_Cx) & (points[:, 0] > Min_Cx) \
@@ -643,14 +442,12 @@ if PLOT_3D:
     fig_3D, ax1 = plt.subplots(figsize=(5, 5))
     ax1 = fig_3D.gca(projection='3d')
     ax1.plot_trisurf(p_points[:, 0], p_points[:, 1], p_points[:, 2],\
-                     antialiased=True, cmap=plt.cm.gist_earth)
+                     antialiased=True, cmap=cm.gist_earth)
     ax1.set_xlabel(r'$X  (\mu m)$')
     ax1.set_ylabel(r'$Y  (\mu m)$')
     ax1.set_zlabel(r'$Z  (\mu m)$')
 
-
 if USE_MAYAVI:
     from mayavi import mlab
-
     # Por ejemplo:
     mlab.surf(grid_x, grid_y, grid_z1)
